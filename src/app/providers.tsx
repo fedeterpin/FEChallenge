@@ -17,7 +17,13 @@ import {
 
 import type { AppRouter } from "@/server/routers/app";
 import { DEFAULT_WORKSPACE_ID } from "@/server/context";
-import { DEFAULT_ROLE, type Role } from "@/db/permissions";
+import { type Role } from "@/db/permissions";
+
+// The server fails closed to least privilege (DEFAULT_ROLE = "analyst") when no
+// role is present. The demo UI explicitly opens as "admin" so candidate PII is
+// visible out of the box — switch the Role selector to "analyst" to watch the
+// gate engage. (Demo posture, not security posture: the server decides access.)
+const INITIAL_UI_ROLE: Role = "admin";
 
 // ---------------------------------------------------------------------------
 // Active tenant + role store
@@ -27,9 +33,9 @@ import { DEFAULT_ROLE, type Role } from "@/db/permissions";
 // read this module-level ref synchronously; React state drives re-render +
 // query invalidation when it changes.
 // ---------------------------------------------------------------------------
-const activeRef = {
+const activeRef: { workspace: string; role: Role } = {
   workspace: DEFAULT_WORKSPACE_ID,
-  role: DEFAULT_ROLE as Role,
+  role: INITIAL_UI_ROLE,
 };
 
 export function getActiveWorkspace(): string {
@@ -88,7 +94,7 @@ export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(makeQueryClient);
   const [trpcClient] = useState(makeTRPCClient);
   const [activeWorkspace, setWorkspaceState] = useState(DEFAULT_WORKSPACE_ID);
-  const [role, setRoleState] = useState<Role>(DEFAULT_ROLE);
+  const [role, setRoleState] = useState<Role>(INITIAL_UI_ROLE);
 
   const value = useMemo<TenantContextValue>(
     () => ({

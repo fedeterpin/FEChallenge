@@ -10,12 +10,14 @@ export const env = {
   /** Which model provider the agent uses. Defaults to the offline mock. */
   AI_PROVIDER: (process.env.AI_PROVIDER ?? "mock") as AiProvider,
 
-  /** Model ids per provider (only read when that provider is selected). */
-  ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-latest",
+  /**
+   * Model ids per provider (only read when that provider is selected).
+   * ANTHROPIC_MODEL defaults to the prod model; set it to `claude-haiku-4-5` in
+   * `.env.local` for cheaper/faster dev + eval runs. See `.env.example`.
+   */
+  ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6",
   OPENAI_MODEL: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-  BEDROCK_MODEL:
-    process.env.BEDROCK_MODEL ??
-    "anthropic.claude-3-5-sonnet-20240620-v1:0",
+  BEDROCK_MODEL: process.env.BEDROCK_MODEL ?? "anthropic.claude-sonnet-4-6",
 
   /**
    * Optional gateway base URL. When set, the anthropic/openai providers route

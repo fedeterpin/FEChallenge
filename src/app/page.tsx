@@ -33,7 +33,6 @@ export default function Page() {
           "x-role": getActiveRole(),
         }),
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeWorkspace, role],
   );
 
@@ -45,7 +44,7 @@ export default function Page() {
   const [input, setInput] = useState("");
   const busy = status === "streaming" || status === "submitted";
 
-  function submit(e: React.FormEvent) {
+  function submit(e: React.SubmitEvent) {
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
@@ -175,13 +174,9 @@ export default function Page() {
 }
 
 // ---------------------------------------------------------------------------
-// Tool-call rendering.
-//
-// TODO(candidate): this is a deliberately bare stub. Each tool returns
-// `{ rows, display }` where `display.kind` is "table" | "bar" | "line". Turn
-// these into real, streaming generative UI — render bar/line charts, show the
-// "calling…" → "result" transition nicely, handle empty/error states. Make it
-// something you'd ship.
+// Generative UI. Each tool returns `{ rows, display }`; we render a component
+// per `display.kind` (bar | line | table) and surface the tool-call lifecycle:
+// calling… (skeleton) → result → empty → error.
 // ---------------------------------------------------------------------------
 type ToolPart = {
   type: string;
@@ -198,51 +193,177 @@ function ToolCall({ part }: { part: unknown }) {
   const errored = p.state === "output-error";
 
   return (
-    <div className="rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs">
-      <div className="font-medium text-gray-600">
-        {name}{" "}
+    <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+      <div className="flex items-center gap-1.5 font-medium text-gray-600">
+        <span
+          className={
+            errored
+              ? "h-1.5 w-1.5 rounded-full bg-red-500"
+              : done
+                ? "h-1.5 w-1.5 rounded-full bg-emerald-500"
+                : "h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"
+          }
+        />
+        {name}
         <span className="font-normal text-gray-400">
           {errored ? "· error" : done ? "· result" : "· calling…"}
         </span>
       </div>
       {errored && <p className="mt-1 text-red-500">{p.errorText}</p>}
-      {done && <RowsTable output={p.output} />}
+      {!done && !errored && <Skeleton />}
+      {done && <Artifact output={p.output} />}
     </div>
   );
 }
 
-function RowsTable({ output }: { output?: { rows?: Row[]; display?: Display } }) {
+function Skeleton() {
+  return (
+    <div className="mt-2 space-y-1.5">
+      {[60, 85, 45].map((w, i) => (
+        <div
+          key={i}
+          className="h-3 animate-pulse rounded bg-gray-100"
+          style={{ width: `${w}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Artifact({ output }: { output?: { rows?: Row[]; display?: Display } }) {
   const rows = output?.rows ?? [];
+  const display = output?.display;
+  if (!display) return <p className="mt-1 text-gray-400">No data.</p>;
   if (rows.length === 0) return <p className="mt-1 text-gray-400">No rows.</p>;
 
-  const display = output?.display;
-  const columns =
-    display && display.kind === "table"
-      ? display.columns
-      : Object.keys(rows[0]);
+  if (display.kind === "bar") return <BarChart rows={rows} display={display} />;
+  if (display.kind === "line") return <LineChart rows={rows} display={display} />;
+  return <DataTable rows={rows} columns={display.columns} />;
+}
+
+function BarChart({
+  rows,
+  display,
+}: {
+  rows: Row[];
+  display: Extract<Display, { kind: "bar" }>;
+}) {
+  const data = rows.map((r) => ({
+    label: String(r[display.x] ?? ""),
+    value: Number(r[display.y] ?? 0),
+  }));
+  const max = Math.max(1, ...data.map((d) => d.value));
 
   return (
-    <table className="mt-2 w-full border-collapse text-left">
-      <thead>
-        <tr className="text-gray-400">
-          {columns.map((c) => (
-            <th key={c} className="border-b border-gray-100 py-1 pr-2 font-medium">
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.slice(0, 8).map((row, i) => (
-          <tr key={i} className="text-gray-600">
-            {columns.map((c) => (
-              <td key={c} className="border-b border-gray-50 py-1 pr-2">
-                {String(row[c] ?? "")}
-              </td>
+    <figure className="mt-2">
+      <figcaption className="mb-2 font-medium text-gray-600">
+        {display.title}
+      </figcaption>
+      <div className="space-y-1.5">
+        {data.map((d, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <div
+              className="w-28 shrink-0 truncate text-gray-500"
+              title={d.label}
+            >
+              {d.label}
+            </div>
+            <div className="relative h-4 flex-1 rounded bg-gray-100">
+              <div
+                className="absolute inset-y-0 left-0 rounded bg-gray-800"
+                style={{ width: `${(d.value / max) * 100}%` }}
+              />
+            </div>
+            <div className="w-10 shrink-0 text-right tabular-nums text-gray-600">
+              {d.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </figure>
+  );
+}
+
+function LineChart({
+  rows,
+  display,
+}: {
+  rows: Row[];
+  display: Extract<Display, { kind: "line" }>;
+}) {
+  const data = rows.map((r) => ({
+    label: String(r[display.x] ?? ""),
+    value: Number(r[display.y] ?? 0),
+  }));
+  const w = 320;
+  const h = 120;
+  const pad = 10;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const stepX = data.length > 1 ? (w - pad * 2) / (data.length - 1) : 0;
+  const points = data.map((d, i) => {
+    const x = data.length > 1 ? pad + i * stepX : w / 2;
+    const y = h - pad - (d.value / max) * (h - pad * 2);
+    return [x, y] as const;
+  });
+  const path = points
+    .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <figure className="mt-2">
+      <figcaption className="mb-2 font-medium text-gray-600">
+        {display.title}
+      </figcaption>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img">
+        {data.length > 1 && (
+          <path d={path} fill="none" stroke="#1f2937" strokeWidth="1.5" />
+        )}
+        {points.map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r="2.5" fill="#1f2937" />
+        ))}
+      </svg>
+      <div className="flex justify-between text-[10px] text-gray-400">
+        <span>{data[0]?.label}</span>
+        {data.length > 1 && <span>{data[data.length - 1]?.label}</span>}
+      </div>
+    </figure>
+  );
+}
+
+function DataTable({ rows, columns }: { rows: Row[]; columns: string[] }) {
+  const cols = columns.length > 0 ? columns : Object.keys(rows[0]);
+  return (
+    <div className="mt-2 overflow-x-auto">
+      <table className="w-full border-collapse text-left">
+        <thead>
+          <tr className="text-gray-400">
+            {cols.map((c) => (
+              <th
+                key={c}
+                className="border-b border-gray-100 py-1 pr-3 font-medium"
+              >
+                {c}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row, i) => (
+            <tr key={i} className="text-gray-600">
+              {cols.map((c) => (
+                <td key={c} className="border-b border-gray-50 py-1 pr-3">
+                  {String(row[c] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > 12 && (
+        <p className="mt-1 text-[10px] text-gray-400">
+          Showing 12 of {rows.length} rows.
+        </p>
+      )}
+    </div>
   );
 }

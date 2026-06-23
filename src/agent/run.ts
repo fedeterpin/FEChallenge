@@ -34,14 +34,19 @@ export async function streamCopilot({
 }) {
   await ensureSchema();
 
-  // This is a minimal loop: one model, the tools, capped at 6 steps. Owning the
-  // loop is part of the exercise — consider tool-error handling, your stop
-  // strategy, and whether the agent should emit a typed structured answer.
+  // A minimal loop: one model, the tools, capped at 6 steps. A thrown tool
+  // `execute` error is surfaced by the AI SDK as an `output-error` tool part
+  // (the UI renders it) and the model can recover on the next step instead of
+  // the stream dying — so we don't swallow errors into a fake result here, we
+  // just log them for visibility.
   return streamText({
     model,
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
     tools: buildTools({ workspaceId, role }),
     stopWhen: stepCountIs(6),
+    onError({ error }) {
+      console.error("[copilot] stream error:", error);
+    },
   });
 }

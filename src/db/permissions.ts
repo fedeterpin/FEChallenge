@@ -19,8 +19,13 @@ export function isRole(value: string): value is Role {
   return (ROLES as readonly string[]).includes(value);
 }
 
-/** Default role when none is supplied on the request. */
-export const DEFAULT_ROLE: Role = "admin";
+/**
+ * Default role when none is supplied on the request. Least-privilege on
+ * purpose: an absent or unrecognized role fails CLOSED to `analyst` (no PII),
+ * never open to `admin`. In production the role comes from the verified session
+ * and a missing one is a 401 — this fallback only guards the mocked-auth path.
+ */
+export const DEFAULT_ROLE: Role = "analyst";
 
 /** Columns considered PII, keyed by table. Reading these requires a non-analyst role. */
 export const PII_COLUMNS: Record<string, readonly string[]> = {
@@ -30,9 +35,17 @@ export const PII_COLUMNS: Record<string, readonly string[]> = {
 /**
  * Whether `role` may read `table.column`.
  *
- * TODO(candidate): implement real enforcement. Right now this is permissive —
- * every role can read everything, including PII. That's the gap to close.
+ * Enforcement is driven entirely by `PII_COLUMNS` (the single source of truth):
+ * a column is readable unless it is PII for `table` AND the caller is an
+ * `analyst`. `recruiter` and `admin` may read everything.
+ *
+ * This predicate is the one decision point. The query layer (src/db/analytics.ts)
+ * consumes it to *omit* PII columns from the projection entirely — so a leaking
+ * query for the wrong role is unrepresentable, not merely rejected after the fact.
  */
-export function canReadColumn(_role: Role, _table: string, _column: string): boolean {
-  return true;
+export function canReadColumn(role: Role, table: string, column: string): boolean {
+  const piiColumns = PII_COLUMNS[table];
+  const isPii = piiColumns?.includes(column) ?? false;
+  if (!isPii) return true;
+  return role !== "analyst";
 }
