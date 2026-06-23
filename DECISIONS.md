@@ -26,11 +26,20 @@ tests), `pnpm eval` (9 eval cases, 100% on the mock), and `pnpm build` all pass.
 - **Query layer** (`src/db/analytics.ts`) — each function is a small, composable
   read that takes `ctx` as argument #1 and returns plain rows. No SQL leaks above
   this layer; tools never build queries.
-- **Tenant scoping — impossible to forget** — every query routes its `WHERE`
-  through the existing `scopeWhere(table, ctx, extra)`, the single place the
-  workspace filter lives. Because `ctx` is the first parameter, a query literally
-  can't be expressed without its tenant scope. Joins stay scoped because the join
-  key (`jobId`/`candidateId`) is itself workspace-local.
+- **Tenant scoping — one gateway, with room to harden** — reads go through a
+  `scoped(ctx)` gateway (`src/db/scoped.ts`), not the raw `db`.
+  `scoped(ctx).select(cols).from(table)` injects the workspace filter, so a
+  single-table read *can't be expressed* unscoped; joins take their mandatory
+  workspace predicate from `scoped(ctx).where(table, …)`. Raw `db` is reserved for
+  migrations/seed/non-tenant tables (`workspaces`). This turns per-query discipline
+  into one enforced doorway — better than the original convention of calling
+  `scopeWhere` by hand. It still *relies* on developers using the gateway, though:
+  the production-grade backstop is Postgres **row-level security** (per-request
+  `SET LOCAL app.workspace_id` + a `USING` policy per table), which enforces
+  isolation even for code that bypasses the gateway. Left as the documented next
+  step — PGlite's single shared connection makes the per-request GUC fiddly (you'd
+  set it inside a transaction). Joins also stay safe because the join key
+  (`jobId`/`candidateId`) is itself workspace-local.
 - **Permissions — PII unrepresentable by construction** (`src/db/permissions.ts`
   + `analytics.ts`) — `PII_COLUMNS` is the single source of truth.
   `canReadColumn(role, table, col)` is the one decision point; `candidateSelection(ctx)`
@@ -38,6 +47,12 @@ tests), `pnpm eval` (9 eval cases, 100% on the mock), and `pnpm build` all pass.
   entirely for analysts. An analyst's query never selects those columns from the DB
   — a leak isn't filtered out after the fact, it can't be produced. The table
   `display.columns` is derived from the same predicate so the UI matches the rows.
+- **Fail closed on role** — the request context defaults to *least privilege*: an
+  absent or unrecognized `x-role` resolves to `analyst` (no PII), never `admin`
+  (`DEFAULT_ROLE` in `permissions.ts`, consumed by `context.ts`). A missing role
+  shouldn't hand out the most access. The demo UI opts into `admin` explicitly via
+  the Role switcher — a demo posture, not a security one; the server decides access.
+  (In real auth a missing role is a 401, not a fallback at all.)
 - **Generative UI** (`src/app/page.tsx`) — components keyed on `display.kind`:
   hand-rolled SVG `line` chart, CSS bar chart, styled table. No chart dependency
   (small surface, streams cleanly, full control). The tool-call lifecycle renders
@@ -91,9 +106,11 @@ different failures:
   wired (stubbed as a comment in the eval file).
 - **`timeToHireByJob`** uses the `appliedAt`→`updatedAt` span of `hired`
   applications as a proxy (the schema has no explicit `hiredAt`).
-- **With another day:** structured/typed final answers from the agent, response
-  caching, a deploy to Railway (PGlite won't survive serverless — it needs a
-  persistent volume or a hosted-Postgres swap), and per-job drill-down UI.
+- **With another day:** Postgres row-level security as the tenant-isolation
+  backstop (so scoping survives even a query that bypasses the gateway),
+  structured/typed final answers from the agent, response caching, a deploy to
+  Railway (PGlite won't survive serverless — it needs a persistent volume or a
+  hosted-Postgres swap), and per-job drill-down UI.
 
 ## Working with the agent
 
