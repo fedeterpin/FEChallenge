@@ -18,6 +18,31 @@ worst bug you can ship here. The reference query in `src/db/analytics.ts`
 scope can't be forgotten as the layer grows. The tRPC `analytics.*` procedures pass
 `ctx` correctly — mirror that.
 
+## Conventions & guardrails (keep these true)
+
+The copilot is built; these are the rules that keep it correct as it grows. A PR
+that breaks one is a regression, not a style nit.
+
+- **Tenant reads go through `scoped(ctx)`** (`src/db/scoped.ts`, used by
+  `src/db/analytics.ts`): `scoped(ctx).select(cols).from(table)` injects the
+  workspace filter, and joins take their predicate from `scoped(ctx).where(table)`.
+  Raw `db` is for migrations, the seed, and non-tenant tables (`workspaces`) only —
+  never a tenant read.
+- **PII gating lives in the query layer, once:** `PII_COLUMNS` → `canReadColumn` →
+  `candidateSelection(ctx)`, which *omits* name/email/phone for an `analyst`. Tools
+  and the UI never re-derive or re-filter PII.
+- **Tools never write SQL.** A tool picks a query, passes high-level params, and
+  returns `{ rows, display }` (`src/agent/artifact.ts`). The query layer owns SQL.
+- **Models are env-driven** — never hardcode a model id. Dev vs. prod differ by
+  `ANTHROPIC_MODEL` only; the mock stays the default so the repo boots keyless.
+- **Roles fail closed** — `DEFAULT_ROLE` is least-privilege (`analyst`), never
+  `admin`; the UI opts into a higher role explicitly.
+- **Benchmarks must catch the real thing** — build ground truth from the scoped
+  layer, not the agent's own output; an eval that can't fail on a real leak is
+  worse than none.
+- **Tool errors surface** as the SDK's `output-error` part (the UI renders it) —
+  never swallow them into a fake `{ rows, display }`.
+
 ## Build a real agent
 
 The repo **boots** on a mock model so it runs on clone and tests stay deterministic,
