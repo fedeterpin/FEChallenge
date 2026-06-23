@@ -1,68 +1,51 @@
-import { and, count, desc, eq, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { count, desc, eq, sql } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 
 import { db } from "./client";
 import { canReadColumn, type Role } from "./permissions";
 import { applications, candidates, jobs } from "./schema";
+import { scoped, type AnalyticsCtx } from "./scoped";
 
 /**
  * Scoped analytics data layer for the copilot.
  *
- * This ships with ONE worked example — `applicationCountByStage` — as a
- * reference pattern. Designing the rest of the query layer the copilot needs is
- * part of the exercise (e.g. applications over time, candidates by source,
- * time-to-hire, per-job breakdowns, individual candidates, …).
+ * Two hard requirements for everything here:
+ *  1. TENANT SCOPING — every read is constrained to `ctx.workspaceId`. Reads go
+ *     through the `scoped(ctx)` gateway (see `src/db/scoped.ts`): single-table
+ *     reads via `scoped(ctx).select(...).from(table)` (scope injected for you),
+ *     joins via `scoped(ctx).where(table, …)`. A query can't be expressed
+ *     without its tenant scope.
+ *  2. PERMISSIONS — candidate PII (name / email / phone) is gated by role; an
+ *     `analyst` may not read it. The projection (`candidateSelection`) omits
+ *     those columns entirely, so a leak is unrepresentable (see `permissions.ts`).
  *
- * Two hard requirements for everything you add here:
- *  1. TENANT SCOPING — every query is constrained to `ctx.workspaceId`. A query
- *     must never read another workspace's rows. (Route scoping through one
- *     place — see `scopeWhere` — so it can't be forgotten as you add queries.)
- *  2. PERMISSIONS — candidate PII (name / email / phone) must be gated by role;
- *     an `analyst` may not read it (see `src/db/permissions.ts`).
- *
- * The benchmark in `evals/run.ts` verifies both against whatever tools you build.
+ * `ctx` is the first parameter on every function on purpose.
  */
 
-export type AnalyticsCtx = { workspaceId: string; role: Role };
-
-/** The one place tenant scoping lives: AND-s the workspace filter into a query. */
-function scopeWhere(
-  table: { workspaceId: AnyColumn },
-  ctx: AnalyticsCtx,
-  extra: Array<SQL | undefined> = [],
-): SQL {
-  const parts = [eq(table.workspaceId, ctx.workspaceId), ...extra].filter(
-    (p): p is SQL => p !== undefined,
-  );
-  // Always has at least the workspace filter, so it's never undefined.
-  return and(...parts)!;
-}
+export type { AnalyticsCtx };
 
 /**
  * REFERENCE QUERY: applications grouped by pipeline stage, scoped to the
- * caller's workspace. Use it as the template for the rest of the layer.
- *
- * `ctx` comes first on purpose: a query can't even be expressed without the
- * tenant scope, so it can't be forgotten.
+ * caller's workspace. `scoped(ctx).select(...).from(...)` injects the workspace
+ * filter; `jobId` is passed as an extra predicate.
  */
 export async function applicationCountByStage(
   ctx: AnalyticsCtx,
   opts: { jobId?: string } = {},
 ) {
   const extra = opts.jobId ? [eq(applications.jobId, opts.jobId)] : [];
-  return db
+  return scoped(ctx)
     .select({ stage: applications.stage, count: count() })
-    .from(applications)
-    .where(scopeWhere(applications, ctx, extra))
+    .from(applications, ...extra)
     .groupBy(applications.stage)
     .orderBy(desc(count()));
 }
 
 /** Candidate counts grouped by acquisition source (referral, linkedin, …). */
 export async function candidatesBySource(ctx: AnalyticsCtx) {
-  return db
+  return scoped(ctx)
     .select({ source: candidates.source, count: count() })
     .from(candidates)
-    .where(scopeWhere(candidates, ctx))
     .groupBy(candidates.source)
     .orderBy(desc(count()));
 }
@@ -78,15 +61,18 @@ export async function applicationsOverTime(
 ) {
   const bucket = opts.bucket === "week" ? "week" : "month";
   const period = sql<string>`to_char(date_trunc(${bucket}, ${applications.appliedAt}), 'YYYY-MM-DD')`;
-  return db
+  return scoped(ctx)
     .select({ period, count: count() })
     .from(applications)
-    .where(scopeWhere(applications, ctx))
     .groupBy(period)
     .orderBy(period);
 }
 
-/** Every job with its application count — the at-a-glance requisition table. */
+/**
+ * Every job with its application count — the at-a-glance requisition table.
+ * A join: the `from`/`leftJoin` is assembled directly, but the mandatory
+ * workspace predicate still comes from the gateway (`scoped(ctx).where`).
+ */
 export async function jobsOverview(ctx: AnalyticsCtx) {
   return db
     .select({
@@ -98,7 +84,7 @@ export async function jobsOverview(ctx: AnalyticsCtx) {
     })
     .from(jobs)
     .leftJoin(applications, eq(applications.jobId, jobs.id))
-    .where(scopeWhere(jobs, ctx))
+    .where(scoped(ctx).where(jobs))
     .groupBy(jobs.id, jobs.title, jobs.department, jobs.location, jobs.status)
     .orderBy(desc(count(applications.id)));
 }
@@ -110,19 +96,18 @@ export async function jobsOverview(ctx: AnalyticsCtx) {
  * its projection, so those columns are never read from the DB — a leak is
  * unrepresentable, not filtered out afterwards.
  */
-function candidateSelection(ctx: AnalyticsCtx) {
-  const all = {
+function candidateSelection(ctx: AnalyticsCtx): Record<string, PgColumn> {
+  const all: Record<string, PgColumn> = {
     id: candidates.id,
     name: candidates.name,
     email: candidates.email,
     phone: candidates.phone,
     source: candidates.source,
     createdAt: candidates.createdAt,
-  } as const;
+  };
 
-  const projection: Partial<Record<keyof typeof all, (typeof all)[keyof typeof all]>> =
-    {};
-  for (const key of Object.keys(all) as Array<keyof typeof all>) {
+  const projection: Record<string, PgColumn> = {};
+  for (const key of Object.keys(all)) {
     if (canReadColumn(ctx.role, "candidates", key)) projection[key] = all[key];
   }
   return projection;
@@ -144,17 +129,17 @@ export async function listCandidates(
   opts: { limit?: number } = {},
 ) {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
-  return db
+  return scoped(ctx)
     .select(candidateSelection(ctx))
     .from(candidates)
-    .where(scopeWhere(candidates, ctx))
     .orderBy(desc(candidates.createdAt))
     .limit(limit);
 }
 
 /**
  * Average days from application to hire, per job (uses `hired` applications'
- * `appliedAt`→`updatedAt` span as the time-to-hire proxy).
+ * `appliedAt`→`updatedAt` span as the time-to-hire proxy). A join; scope comes
+ * from `scoped(ctx).where`, with `stage = 'hired'` as an extra predicate.
  */
 export async function timeToHireByJob(ctx: AnalyticsCtx) {
   const avgDays = sql<number>`round(avg(extract(epoch from (${applications.updatedAt} - ${applications.appliedAt})) / 86400))`;
@@ -162,7 +147,7 @@ export async function timeToHireByJob(ctx: AnalyticsCtx) {
     .select({ title: jobs.title, avgDays })
     .from(applications)
     .innerJoin(jobs, eq(jobs.id, applications.jobId))
-    .where(scopeWhere(applications, ctx, [eq(applications.stage, "hired")]))
+    .where(scoped(ctx).where(applications, eq(applications.stage, "hired")))
     .groupBy(jobs.id, jobs.title)
     .orderBy(jobs.title);
 }
