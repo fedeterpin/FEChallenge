@@ -23,8 +23,9 @@ export function tenantFromHeaders(req: Request): Context {
   const workspaceId =
     req.headers.get("x-workspace")?.trim() || DEFAULT_WORKSPACE_ID;
   const roleHeader = req.headers.get("x-role")?.trim() ?? "";
-  // Demo convenience: default to `admin` so you see everything out of the box.
-  // A production system would default to LEAST privilege and widen explicitly.
+  // Fail CLOSED: an absent or unrecognized role falls back to least privilege
+  // (DEFAULT_ROLE = "analyst"), never to admin. The demo UI opts into a higher
+  // role explicitly via the Role switcher.
   const role = isRole(roleHeader) ? roleHeader : DEFAULT_ROLE;
   return { workspaceId, role };
 }

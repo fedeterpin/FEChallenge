@@ -19,8 +19,13 @@ export function isRole(value: string): value is Role {
   return (ROLES as readonly string[]).includes(value);
 }
 
-/** Default role when none is supplied on the request. */
-export const DEFAULT_ROLE: Role = "admin";
+/**
+ * Default role when none is supplied on the request. Least-privilege on
+ * purpose: an absent or unrecognized role fails CLOSED to `analyst` (no PII),
+ * never open to `admin`. In production the role comes from the verified session
+ * and a missing one is a 401 — this fallback only guards the mocked-auth path.
+ */
+export const DEFAULT_ROLE: Role = "analyst";
 
 /** Columns considered PII, keyed by table. Reading these requires a non-analyst role. */
 export const PII_COLUMNS: Record<string, readonly string[]> = {
