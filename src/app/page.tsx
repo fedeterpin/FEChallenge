@@ -33,7 +33,6 @@ export default function Page() {
           "x-role": getActiveRole(),
         }),
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeWorkspace, role],
   );
 
@@ -45,7 +44,7 @@ export default function Page() {
   const [input, setInput] = useState("");
   const busy = status === "streaming" || status === "submitted";
 
-  function submit(e: React.FormEvent) {
+  function submit(e: React.SubmitEvent) {
     e.preventDefault();
     const text = input.trim();
     if (!text || busy) return;
