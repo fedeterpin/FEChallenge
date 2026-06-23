@@ -24,8 +24,10 @@ tests), `pnpm eval` (9 eval cases, 100% on the mock), and `pnpm build` all pass.
   optional params keep offline boot working while still letting the real model pass
   `jobId`, `bucket`, or `limit`.
 - **Query layer** (`src/db/analytics.ts`) — each function is a small, composable
-  read that takes `ctx` as argument #1 and returns plain rows. No SQL leaks above
-  this layer; tools never build queries.
+  read that takes `ctx` as argument #1, builds on the `scoped(ctx)` gateway so every
+  read is workspace-scoped (see *Tenant scoping* below) and gated on `ctx.role` for
+  candidate PII (see *Permissions*), and returns plain rows. No SQL leaks above this
+  layer; tools never build queries.
 - **Tenant scoping — one gateway, with room to harden** — reads go through a
   `scoped(ctx)` gateway (`src/db/scoped.ts`), not the raw `db`.
   `scoped(ctx).select(cols).from(table)` injects the workspace filter, so a
@@ -81,10 +83,10 @@ tests), `pnpm eval` (9 eval cases, 100% on the mock), and `pnpm build` all pass.
 Two layers, because the model-driven eval and the by-construction guarantee catch
 different failures:
 
-- **Vitest units (no model, deterministic)** — `analytics.test.ts` proves a
-  Brightwave query never returns Meridian rows (id prefixes, job titles) and that
-  the analyst projection omits PII while recruiters/admins keep it;
-  `permissions.test.ts` pins `canReadColumn`. This is the "right by construction"
+- **Vitest units (no model, deterministic)** — `src/db/__tests__/analytics.test.ts`
+  proves a Brightwave query never returns Meridian rows (id prefixes, job titles)
+  and that the analyst projection omits PII while recruiters/admins keep it;
+  `src/db/__tests__/permissions.test.ts` pins `canReadColumn`. This is the "right by construction"
   proof, independent of any model.
 - **Evalite (runs on mock; flip to the real agent with `AI_PROVIDER=anthropic`)** —
   *Tenant isolation*: ground truth is built by calling the analytics layer directly
@@ -106,6 +108,12 @@ different failures:
   wired (stubbed as a comment in the eval file).
 - **`timeToHireByJob`** uses the `appliedAt`→`updatedAt` span of `hired`
   applications as a proxy (the schema has no explicit `hiredAt`).
+- **Prompt caching not wired.** Anthropic `cache_control: ephemeral` would re-read
+  the `tools`+`system` prefix from cache (~0.1× input cost) across the 6-step agent
+  loop and across turns. Skipped for now because the static prefix (system + 6 tools
+  ≈ 1.2K tokens) sits below the per-model cacheable minimum (2K on Sonnet 4.6, 4K on
+  Haiku 4.5), so it only starts paying off once a conversation grows past that — a
+  one-line `providerOptions.anthropic.cacheControl` to add when chats get longer.
 - **With another day:** Postgres row-level security as the tenant-isolation
   backstop (so scoping survives even a query that bypasses the gateway),
   structured/typed final answers from the agent, response caching, a deploy to
