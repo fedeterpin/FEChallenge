@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { db, ensureSchema } from "./client";
 import {
+  applicationsOverTime,
   jobsOverview,
   listCandidates,
   type AnalyticsCtx,
@@ -75,6 +76,20 @@ describe("PII projection (unrepresentable by construction)", () => {
         expect(row).toHaveProperty("email");
         expect(row).toHaveProperty("phone");
       }
+    }
+  });
+});
+
+describe("applicationsOverTime (time bucketing)", () => {
+  it("groups by month and week without a Postgres GROUP BY error", async () => {
+    const month = await applicationsOverTime(BRIGHTWAVE);
+    const week = await applicationsOverTime(BRIGHTWAVE, { bucket: "week" });
+
+    expect(month.length).toBeGreaterThan(0);
+    expect(week.length).toBeGreaterThan(0);
+    for (const row of month) {
+      expect(row).toHaveProperty("period");
+      expect(Number(row.count)).toBeGreaterThan(0);
     }
   });
 });

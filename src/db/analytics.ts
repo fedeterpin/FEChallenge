@@ -61,11 +61,15 @@ export async function applicationsOverTime(
 ) {
   const bucket = opts.bucket === "week" ? "week" : "month";
   const period = sql<string>`to_char(date_trunc(${bucket}, ${applications.appliedAt}), 'YYYY-MM-DD')`;
+  // GROUP BY / ORDER BY the SELECT's ordinal position. `period` embeds a bound
+  // parameter (the whitelisted bucket); repeating that expression in GROUP BY
+  // would render a second, distinct placeholder, so Postgres would reject the
+  // non-aggregated `applied_at`. Referencing position 1 keeps them identical.
   return scoped(ctx)
     .select({ period, count: count() })
     .from(applications)
-    .groupBy(period)
-    .orderBy(period);
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
 }
 
 /**
