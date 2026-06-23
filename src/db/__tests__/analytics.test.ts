@@ -1,15 +1,15 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { db, ensureSchema } from "./client";
+import { db, ensureSchema } from "@/db/client";
 import {
   applicationsOverTime,
   jobsOverview,
   listCandidates,
   type AnalyticsCtx,
-} from "./analytics";
-import { PII_COLUMNS } from "./permissions";
-import { workspaces } from "./schema";
-import { seed } from "./seed";
+} from "@/db/analytics";
+import { PII_COLUMNS } from "@/db/permissions";
+import { workspaces } from "@/db/schema";
+import { seed } from "@/db/seed";
 
 /**
  * "Right by construction" coverage, independent of any model. Proves the two

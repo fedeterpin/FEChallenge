@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ROLES, canReadColumn, PII_COLUMNS } from "./permissions";
+import { ROLES, canReadColumn, PII_COLUMNS } from "@/db/permissions";
 
 /**
  * Pure, model-free proof of the permission predicate. The "unrepresentable"
